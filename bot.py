@@ -1,71 +1,67 @@
 import os
-import aiohttp
-import threading
-import time
-import requests
-from dotenv import load_dotenv
+import json
+import subprocess
 import discord
 from discord.ext import commands
 from discord import app_commands
-from flask import Flask
-from threading import Thread
-import sqlite3
+import aiohttp
+from dotenv import load_dotenv
 
-# 🔐 Token aus .env laden
+# Token & GitHub Config laden
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
-if not TOKEN:
-    raise ValueError("❌ DISCORD_TOKEN konnte nicht aus der .env geladen werden!")
+GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_REPO = os.getenv("GITHUB_REPO")  # z.B. "username/repo"
 
-# 📡 Bot konfigurieren
+if not TOKEN or not GITHUB_USERNAME or not GITHUB_TOKEN or not GITHUB_REPO:
+    raise ValueError("Bitte DISCORD_TOKEN, GITHUB_USERNAME, GITHUB_TOKEN und GITHUB_REPO in .env setzen!")
+
+# Bot Setup
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-DB_FILE = "gear_data.db"
-print(f"ℹ️ Datenbank-Dateipfad: {os.path.abspath(DB_FILE)}")  # Pfad zur DB ausgeben
-synced_once = False
+DATA_FILE = "gear_data.json"
+gear_data = {}
 
-# --- Thread Lock für SQLite ---
-db_lock = threading.Lock()
+# Lade bestehende Daten
+if os.path.exists(DATA_FILE):
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        gear_data = json.load(f)
 
-# --- SQLite Setup ---
-def init_db():
-    print("⏳ Starte Datenbank-Initialisierung...")
+# Git Commit & Push Funktion
+def git_commit_and_push(commit_msg="Update gear data"):
     try:
-        with db_lock:
-            conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-            c = conn.cursor()
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS gear (
-                    user_id INTEGER PRIMARY KEY,
-                    familyname TEXT,
-                    class TEXT,
-                    state TEXT,
-                    ap INTEGER,
-                    aap INTEGER,
-                    dp INTEGER,
-                    gearscore REAL,
-                    proof TEXT
-                )
-            ''')
-            conn.commit()
-            conn.close()
-        print("✅ Datenbank erfolgreich initialisiert.")
-    except sqlite3.DatabaseError as e:
-        print(f"❌ Fehler bei der Datenbankinitialisierung: {e}")
+        subprocess.run(["git", "add", DATA_FILE], check=True)
+        subprocess.run(["git", "commit", "-m", commit_msg], check=True)
+        repo_url = f"https://{GITHUB_USERNAME}:{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+        subprocess.run(["git", "push", repo_url, "main"], check=True)
+        print("✅ Git push erfolgreich")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Git Fehler: {e}")
 
-# Datenbank initialisieren
-init_db()
-print("ℹ️ Datenbank Init-Funktion wurde aufgerufen.")
+# Speichere Daten in JSON + Git Push
+def save_data():
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(gear_data, f, indent=4, ensure_ascii=False)
+    git_commit_and_push("Automatischer Update der Gear Daten")
 
-# 📥 Anhang speichern mit besserem Fehlerhandling
+# Lade Daten eines Users
+def load_gear(user_id):
+    return gear_data.get(str(user_id))
+
+# Speichere/Update Gear Daten eines Users
+def save_gear(user_id, data):
+    gear_data[str(user_id)] = data
+    save_data()
+
+# Anhang herunterladen und speichern
 async def download_and_save_attachment(attachment: discord.Attachment, user_id: int):
     folder = "proofs"
     os.makedirs(folder, exist_ok=True)
     filename = f"{user_id}_{attachment.filename}"
     filepath = os.path.join(folder, filename)
-
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(attachment.url) as resp:
@@ -73,88 +69,11 @@ async def download_and_save_attachment(attachment: discord.Attachment, user_id: 
                     with open(filepath, "wb") as f:
                         f.write(await resp.read())
                     return filepath
-                else:
-                    print(f"❌ Fehler beim Herunterladen der Datei: HTTP {resp.status}")
     except Exception as e:
-        print(f"❌ Ausnahme beim Herunterladen des Attachments: {e}")
-
+        print(f"❌ Fehler beim Download: {e}")
     return None
 
-# 💾 Gear speichern/laden mit SQLite und Lock
-def save_gear(user_id, gear_data):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-        c = conn.cursor()
-        c.execute('''
-            INSERT INTO gear (user_id, familyname, class, state, ap, aap, dp, gearscore, proof)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                familyname=excluded.familyname,
-                class=excluded.class,
-                state=excluded.state,
-                ap=excluded.ap,
-                aap=excluded.aap,
-                dp=excluded.dp,
-                gearscore=excluded.gearscore,
-                proof=excluded.proof
-        ''', (
-            user_id,
-            gear_data.get("familyname"),
-            gear_data.get("class"),
-            gear_data.get("state"),
-            gear_data.get("ap"),
-            gear_data.get("aap"),
-            gear_data.get("dp"),
-            gear_data.get("gearscore"),
-            gear_data.get("proof")
-        ))
-        conn.commit()
-        conn.close()
-
-def load_gear(user_id):
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-        c = conn.cursor()
-        c.execute('SELECT familyname, class, state, ap, aap, dp, gearscore, proof FROM gear WHERE user_id = ?', (user_id,))
-        row = c.fetchone()
-        conn.close()
-    if row:
-        return {
-            "familyname": row[0],
-            "class": row[1],
-            "state": row[2],
-            "ap": row[3],
-            "aap": row[4],
-            "dp": row[5],
-            "gearscore": row[6],
-            "proof": row[7]
-        }
-    return None
-
-def load_all_gears():
-    with db_lock:
-        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-        c = conn.cursor()
-        c.execute('SELECT user_id, familyname, class, state, ap, aap, dp, gearscore, proof FROM gear')
-        rows = c.fetchall()
-        conn.close()
-
-    all_gears = {}
-    for row in rows:
-        user_id = row[0]
-        all_gears[user_id] = {
-            "familyname": row[1],
-            "class": row[2],
-            "state": row[3],
-            "ap": row[4],
-            "aap": row[5],
-            "dp": row[6],
-            "gearscore": row[7],
-            "proof": row[8]
-        }
-    return all_gears
-
-# Sicheres Senden von Nachrichten mit Fehlerbehandlung
+# Sicheres Senden von Nachrichten
 async def safe_send(interaction, *args, **kwargs):
     try:
         await interaction.response.send_message(*args, **kwargs)
@@ -166,24 +85,21 @@ async def safe_send(interaction, *args, **kwargs):
     except Exception as e:
         print(f"⚠️ Fehler beim Senden der Nachricht: {e}")
 
-# 🚀 Bot ready
+# Bot ready Event
 @bot.event
 async def on_ready():
-    global synced_once
     print(f"✅ Bot ist online als {bot.user}")
-    if not synced_once:
-        try:
-            synced = await bot.tree.sync()
-            synced_once = True
-            print(f"✅ {len(synced)} Slash Commands synchronisiert.")
-        except Exception as e:
-            print(f"❌ Fehler beim Slash Sync: {e}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ {len(synced)} Slash Commands synchronisiert.")
+    except Exception as e:
+        print(f"❌ Fehler beim Slash Sync: {e}")
 
-# 🛠️ Slash Commands
+# /gear_set Command
 @bot.tree.command(name="gear_set", description="Setze dein Gear inkl. optionalem Bild")
 @app_commands.describe(
     familyname="Optional: Dein Familyname",
-    klasse="Gib deine Klasse ein",
+    klasse="Deine Klasse",
     state="Awakening oder Succession",
     ap="Attack Power",
     aap="Awakening AP",
@@ -197,7 +113,7 @@ async def gear_set(interaction: discord.Interaction, klasse: str, state: str, ap
         return
 
     gearscore = (ap + aap) / 2 + dp
-    gear_data = {
+    data = {
         "familyname": familyname,
         "class": klasse,
         "state": state,
@@ -211,11 +127,12 @@ async def gear_set(interaction: discord.Interaction, klasse: str, state: str, ap
     if proof:
         filepath = await download_and_save_attachment(proof, interaction.user.id)
         if filepath:
-            gear_data["proof"] = filepath
+            data["proof"] = filepath
 
-    save_gear(interaction.user.id, gear_data)
+    save_gear(interaction.user.id, data)
     await safe_send(interaction, f"✅ Gear gespeichert! Gearscore: **{round(gearscore, 2)}**")
 
+# /gear_show Command
 @bot.tree.command(name="gear_show", description="Zeigt dein Gear oder das eines anderen")
 @app_commands.describe(user="Optional: anderer User")
 async def gear_show(interaction: discord.Interaction, user: discord.User = None):
@@ -240,14 +157,14 @@ async def gear_show(interaction: discord.Interaction, user: discord.User = None)
     else:
         await safe_send(interaction, embed=embed)
 
+# /gear_list Command
 @bot.tree.command(name="gear_list", description="Zeigt alle Geardaten nach Gearscore")
 async def gear_list(interaction: discord.Interaction):
-    all_gears = load_all_gears()
-    if not all_gears:
+    if not gear_data:
         await safe_send(interaction, "❌ Keine Geardaten vorhanden.")
         return
 
-    sorted_gears = sorted(all_gears.items(), key=lambda x: x[1]["gearscore"], reverse=True)
+    sorted_gears = sorted(gear_data.items(), key=lambda x: x[1]["gearscore"], reverse=True)
     embed = discord.Embed(title="📊 Gear Liste (nach Gearscore sortiert)", color=0x00ffcc)
 
     for i, (user_id, data) in enumerate(sorted_gears, start=1):
@@ -264,6 +181,7 @@ async def gear_list(interaction: discord.Interaction):
         )
     await safe_send(interaction, embed=embed)
 
+# /gear_update Command
 @bot.tree.command(name="gear_update", description="Aktualisiere dein gespeichertes Gear")
 @app_commands.describe(
     familyname="Optional: Neuer Familyname",
@@ -274,16 +192,8 @@ async def gear_list(interaction: discord.Interaction):
     dp="Optional: Neuer DP-Wert",
     proof="Optional: Neues Bild"
 )
-async def gear_update(
-    interaction: discord.Interaction,
-    familyname: str = None,
-    klasse: str = None,
-    state: str = None,
-    ap: int = None,
-    aap: int = None,
-    dp: int = None,
-    proof: discord.Attachment = None
-):
+async def gear_update(interaction: discord.Interaction, familyname: str = None, klasse: str = None, state: str = None,
+                      ap: int = None, aap: int = None, dp: int = None, proof: discord.Attachment = None):
     data = load_gear(interaction.user.id)
     if not data:
         await safe_send(interaction, "❌ Du hast noch kein Gear gespeichert. Nutze zuerst `/gear_set`.")
@@ -310,35 +220,5 @@ async def gear_update(
 
     await safe_send(interaction, f"✅ Gear aktualisiert! Neuer Gearscore: **{data['gearscore']}**")
 
-# 🌐 Flask-Webserver für Replit
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "Bot läuft!"
-
-def run():
-    app.run(host='0.0.0.0', port=5000)
-
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
-
-keep_alive()
-
-# 🔁 Self-Ping an Replit-URL
-def self_ping():
-    while True:
-        try:
-            url = "https://gearbot.danieldyllong.repl.co"  # Bitte ggf. URL anpassen!
-            r = requests.get(url)
-            print(f"🔁 Self-ping: {r.status_code}")
-        except Exception as e:
-            print(f"⚠️ Self-ping Fehler: {e}")
-        time.sleep(280)
-
-threading.Thread(target=self_ping).start()
-
 # Bot starten
 bot.run(TOKEN)
-
