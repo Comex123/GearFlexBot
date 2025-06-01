@@ -1,5 +1,4 @@
 import os
-import json
 import aiohttp
 import threading
 import time
@@ -10,6 +9,7 @@ from discord.ext import commands
 from discord import app_commands
 from flask import Flask
 from threading import Thread
+import sqlite3
 
 # 🔐 Token aus .env laden
 load_dotenv()
@@ -21,8 +21,31 @@ if not TOKEN:
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
-DATA_FILE = "gear_data.json"
+
+DB_FILE = "gear_data.db"
 synced_once = False
+
+# --- SQLite Setup ---
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS gear (
+            user_id INTEGER PRIMARY KEY,
+            familyname TEXT,
+            class TEXT,
+            state TEXT,
+            ap INTEGER,
+            aap INTEGER,
+            dp INTEGER,
+            gearscore REAL,
+            proof TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+init_db()
 
 # 📥 Anhang speichern
 async def download_and_save_attachment(attachment: discord.Attachment, user_id: int):
@@ -39,27 +62,76 @@ async def download_and_save_attachment(attachment: discord.Attachment, user_id: 
                 return filepath
     return None
 
-# 💾 Gear speichern/laden
+# 💾 Gear speichern/laden mit SQLite
 def save_gear(user_id, gear_data):
-    all_data = {}
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            all_data = json.load(f)
-    all_data[str(user_id)] = gear_data
-    with open(DATA_FILE, "w") as f:
-        json.dump(all_data, f, indent=4)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO gear (user_id, familyname, class, state, ap, aap, dp, gearscore, proof)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            familyname=excluded.familyname,
+            class=excluded.class,
+            state=excluded.state,
+            ap=excluded.ap,
+            aap=excluded.aap,
+            dp=excluded.dp,
+            gearscore=excluded.gearscore,
+            proof=excluded.proof
+    ''', (
+        user_id,
+        gear_data.get("familyname"),
+        gear_data.get("class"),
+        gear_data.get("state"),
+        gear_data.get("ap"),
+        gear_data.get("aap"),
+        gear_data.get("dp"),
+        gear_data.get("gearscore"),
+        gear_data.get("proof")
+    ))
+    conn.commit()
+    conn.close()
 
 def load_gear(user_id):
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f).get(str(user_id))
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT familyname, class, state, ap, aap, dp, gearscore, proof FROM gear WHERE user_id = ?', (user_id,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return {
+            "familyname": row[0],
+            "class": row[1],
+            "state": row[2],
+            "ap": row[3],
+            "aap": row[4],
+            "dp": row[5],
+            "gearscore": row[6],
+            "proof": row[7]
+        }
     return None
 
 def load_all_gears():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return {}
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT user_id, familyname, class, state, ap, aap, dp, gearscore, proof FROM gear')
+    rows = c.fetchall()
+    conn.close()
+
+    all_gears = {}
+    for row in rows:
+        user_id = row[0]
+        all_gears[user_id] = {
+            "familyname": row[1],
+            "class": row[2],
+            "state": row[3],
+            "ap": row[4],
+            "aap": row[5],
+            "dp": row[6],
+            "gearscore": row[7],
+            "proof": row[8]
+        }
+    return all_gears
 
 async def safe_send(interaction, *args, **kwargs):
     try:
@@ -105,7 +177,8 @@ async def gear_set(interaction: discord.Interaction, klasse: str, state: str, ap
         "ap": ap,
         "aap": aap,
         "dp": dp,
-        "gearscore": round(gearscore, 2)
+        "gearscore": round(gearscore, 2),
+        "proof": None
     }
 
     if proof:
@@ -230,14 +303,14 @@ keep_alive()
 def self_ping():
     while True:
         try:
-            url = "https://gearbot.danieldyllong.repl.co"
+            url = "https://gearbot.danieldyllong.repl.co"  # Bitte ggf. URL anpassen!
             r = requests.get(url)
             print(f"🔁 Self-ping: {r.status_code}")
         except Exception as e:
             print(f"⚠️ Self-ping Fehler: {e}")
-        time.sleep(300)
+        time.sleep(280)
 
 threading.Thread(target=self_ping).start()
 
-# ▶️ Bot starten
+# Bot starten
 bot.run(TOKEN)

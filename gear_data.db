@@ -1,0 +1,82 @@
+{
+    "450033363131301890": {
+        "familyname": "COMEX",
+        "class": "Striker",
+        "state": "Awakening",
+        "ap": 351,
+        "aap": 352,
+        "dp": 426,
+        "gearscore": 777.5,
+        "proof": "proofs/450033363131301890_47f9c6a8d72c5f3e8aa60b47da02c90a.png"
+    },
+    "317777414845497345": {
+        "familyname": "Cultus",
+        "class": "Gardia",
+        "state": "Succession",
+        "ap": 350,
+        "aap": 346,
+        "dp": 429,
+        "gearscore": 777.0,
+        "proof": "https://cdn.discordapp.com/ephemeral-attachments/1359845396209205441/1359864893746053354/image.png?ex=67f9085f&is=67f7b6df&hm=fbded68b3ca1032b5e5759bd9c3d3b095d848589c7889120a0448ce207cf1719&"
+    },
+    "389364410684014592": {
+        "familyname": "DonnerstammIV",
+        "class": "Dosa",
+        "state": "Succession",
+        "ap": 342,
+        "aap": 342,
+        "dp": 422,
+        "gearscore": 764.0,
+        "proof": "proofs/389364410684014592_Screenshot_31.png"
+    },
+    "518042872289951760": {
+        "familyname": "Venatoris",
+        "class": "Tamer",
+        "state": "Succession",
+        "ap": 355,
+        "aap": 352,
+        "dp": 429,
+        "gearscore": 782.5,
+        "proof": "https://cdn.discordapp.com/ephemeral-attachments/1359845396209205441/1375940847224360970/24.05.PNG?ex=68338445&is=683232c5&hm=e239c7b6a7439978c13d3f8c9c4169fea82c61372ad7d9feea4c1275ae6cf3a9&"
+    },
+    "273786641028481026": {
+        "familyname": "OnlyZz",
+        "class": "Tamer",
+        "state": "Succession",
+        "ap": 331,
+        "aap": 325,
+        "dp": 412,
+        "gearscore": 740.0,
+        "proof": "proofs/273786641028481026_Screenshot_2025-05-26_135511.png"
+    },
+    "235422685083992064": {
+        "familyname": "BeaterKirigaya",
+        "class": "Dosa",
+        "state": "Succession",
+        "ap": 330,
+        "aap": 326,
+        "dp": 426,
+        "gearscore": 754.0,
+        "proof": "https://cdn.discordapp.com/ephemeral-attachments/1375975359010570360/1376187752584057032/image.png?ex=68346a38&is=683318b8&hm=b7fd6db0cc4bf38553c25a89c04f824595de47b2b4834b97cd4bf3c26818bf47&"
+    },
+    "176044879292399617": {
+        "familyname": "SORGGUN",
+        "class": "Musa",
+        "state": "Succession",
+        "ap": 328,
+        "aap": 327,
+        "dp": 432,
+        "gearscore": 759.5,
+        "proof": "proofs/176044879292399617_image.png"
+    },
+    "334067166993317888": {
+        "familyname": "JabbaJonny",
+        "class": "Striker",
+        "state": "Succession",
+        "ap": 346,
+        "aap": 344,
+        "dp": 429,
+        "gearscore": 774.0,
+        "proof": "proofs/334067166993317888_image.png"
+    }
+}
