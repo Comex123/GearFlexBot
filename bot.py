@@ -23,81 +23,101 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 DB_FILE = "gear_data.db"
+print(f"ℹ️ Datenbank-Dateipfad: {os.path.abspath(DB_FILE)}")  # Pfad zur DB ausgeben
 synced_once = False
+
+# --- Thread Lock für SQLite ---
+db_lock = threading.Lock()
 
 # --- SQLite Setup ---
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS gear (
-            user_id INTEGER PRIMARY KEY,
-            familyname TEXT,
-            class TEXT,
-            state TEXT,
-            ap INTEGER,
-            aap INTEGER,
-            dp INTEGER,
-            gearscore REAL,
-            proof TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    print("⏳ Starte Datenbank-Initialisierung...")
+    try:
+        with db_lock:
+            conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+            c = conn.cursor()
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS gear (
+                    user_id INTEGER PRIMARY KEY,
+                    familyname TEXT,
+                    class TEXT,
+                    state TEXT,
+                    ap INTEGER,
+                    aap INTEGER,
+                    dp INTEGER,
+                    gearscore REAL,
+                    proof TEXT
+                )
+            ''')
+            conn.commit()
+            conn.close()
+        print("✅ Datenbank erfolgreich initialisiert.")
+    except sqlite3.DatabaseError as e:
+        print(f"❌ Fehler bei der Datenbankinitialisierung: {e}")
 
+# Datenbank initialisieren
 init_db()
+print("ℹ️ Datenbank Init-Funktion wurde aufgerufen.")
 
-# 📥 Anhang speichern
+# 📥 Anhang speichern mit besserem Fehlerhandling
 async def download_and_save_attachment(attachment: discord.Attachment, user_id: int):
     folder = "proofs"
     os.makedirs(folder, exist_ok=True)
     filename = f"{user_id}_{attachment.filename}"
     filepath = os.path.join(folder, filename)
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(attachment.url) as resp:
-            if resp.status == 200:
-                with open(filepath, "wb") as f:
-                    f.write(await resp.read())
-                return filepath
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(attachment.url) as resp:
+                if resp.status == 200:
+                    with open(filepath, "wb") as f:
+                        f.write(await resp.read())
+                    return filepath
+                else:
+                    print(f"❌ Fehler beim Herunterladen der Datei: HTTP {resp.status}")
+    except Exception as e:
+        print(f"❌ Ausnahme beim Herunterladen des Attachments: {e}")
+
     return None
 
-# 💾 Gear speichern/laden mit SQLite
+# 💾 Gear speichern/laden mit SQLite und Lock
 def save_gear(user_id, gear_data):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('''
-        INSERT INTO gear (user_id, familyname, class, state, ap, aap, dp, gearscore, proof)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-            familyname=excluded.familyname,
-            class=excluded.class,
-            state=excluded.state,
-            ap=excluded.ap,
-            aap=excluded.aap,
-            dp=excluded.dp,
-            gearscore=excluded.gearscore,
-            proof=excluded.proof
-    ''', (
-        user_id,
-        gear_data.get("familyname"),
-        gear_data.get("class"),
-        gear_data.get("state"),
-        gear_data.get("ap"),
-        gear_data.get("aap"),
-        gear_data.get("dp"),
-        gear_data.get("gearscore"),
-        gear_data.get("proof")
-    ))
-    conn.commit()
-    conn.close()
+    with db_lock:
+        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+        c = conn.cursor()
+        c.execute('''
+            INSERT INTO gear (user_id, familyname, class, state, ap, aap, dp, gearscore, proof)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                familyname=excluded.familyname,
+                class=excluded.class,
+                state=excluded.state,
+                ap=excluded.ap,
+                aap=excluded.aap,
+                dp=excluded.dp,
+                gearscore=excluded.gearscore,
+                proof=excluded.proof
+        ''', (
+            user_id,
+            gear_data.get("familyname"),
+            gear_data.get("class"),
+            gear_data.get("state"),
+            gear_data.get("ap"),
+            gear_data.get("aap"),
+            gear_data.get("dp"),
+            gear_data.get("gearscore"),
+            gear_data.get("proof")
+        ))
+        conn.commit()
+        conn.close()
 
 def load_gear(user_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('SELECT familyname, class, state, ap, aap, dp, gearscore, proof FROM gear WHERE user_id = ?', (user_id,))
-    row = c.fetchone()
-    conn.close()
+    with db_lock:
+        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+        c = conn.cursor()
+        c.execute('SELECT familyname, class, state, ap, aap, dp, gearscore, proof FROM gear WHERE user_id = ?', (user_id,))
+        row = c.fetchone()
+        conn.close()
     if row:
         return {
             "familyname": row[0],
@@ -112,11 +132,12 @@ def load_gear(user_id):
     return None
 
 def load_all_gears():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute('SELECT user_id, familyname, class, state, ap, aap, dp, gearscore, proof FROM gear')
-    rows = c.fetchall()
-    conn.close()
+    with db_lock:
+        conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+        c = conn.cursor()
+        c.execute('SELECT user_id, familyname, class, state, ap, aap, dp, gearscore, proof FROM gear')
+        rows = c.fetchall()
+        conn.close()
 
     all_gears = {}
     for row in rows:
@@ -133,11 +154,17 @@ def load_all_gears():
         }
     return all_gears
 
+# Sicheres Senden von Nachrichten mit Fehlerbehandlung
 async def safe_send(interaction, *args, **kwargs):
     try:
         await interaction.response.send_message(*args, **kwargs)
-    except:
-        pass
+    except discord.InteractionResponded:
+        try:
+            await interaction.followup.send(*args, **kwargs)
+        except Exception as e:
+            print(f"⚠️ Fehler beim Senden der Followup-Nachricht: {e}")
+    except Exception as e:
+        print(f"⚠️ Fehler beim Senden der Nachricht: {e}")
 
 # 🚀 Bot ready
 @bot.event
@@ -314,3 +341,4 @@ threading.Thread(target=self_ping).start()
 
 # Bot starten
 bot.run(TOKEN)
+
