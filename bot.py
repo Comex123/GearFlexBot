@@ -6,8 +6,21 @@ from discord.ext import commands
 from discord import app_commands
 import aiohttp
 from dotenv import load_dotenv
+from flask import Flask
+import threading
 
-# Token & GitHub Config laden
+# ==== Flask Dummy Server für Render ====
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return "✅ Bot läuft!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))  # Render erwartet offenen Port
+    app.run(host='0.0.0.0', port=port)
+
+# ==== Token & GitHub Config laden ====
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
@@ -17,7 +30,7 @@ GITHUB_REPO = os.getenv("GITHUB_REPO")  # z.B. "username/repo"
 if not TOKEN or not GITHUB_USERNAME or not GITHUB_TOKEN or not GITHUB_REPO:
     raise ValueError("Bitte DISCORD_TOKEN, GITHUB_USERNAME, GITHUB_TOKEN und GITHUB_REPO in .env setzen!")
 
-# Bot Setup
+# ==== Bot Setup ====
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -41,22 +54,19 @@ def git_commit_and_push(commit_msg="Update gear data"):
     except subprocess.CalledProcessError as e:
         print(f"❌ Git Fehler: {e}")
 
-# Speichere Daten in JSON + Git Push
+# Speichern
 def save_data():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(gear_data, f, indent=4, ensure_ascii=False)
     git_commit_and_push("Automatischer Update der Gear Daten")
 
-# Lade Daten eines Users
 def load_gear(user_id):
     return gear_data.get(str(user_id))
 
-# Speichere/Update Gear Daten eines Users
 def save_gear(user_id, data):
     gear_data[str(user_id)] = data
     save_data()
 
-# Anhang herunterladen und speichern
 async def download_and_save_attachment(attachment: discord.Attachment, user_id: int):
     folder = "proofs"
     os.makedirs(folder, exist_ok=True)
@@ -73,7 +83,6 @@ async def download_and_save_attachment(attachment: discord.Attachment, user_id: 
         print(f"❌ Fehler beim Download: {e}")
     return None
 
-# Sicheres Senden von Nachrichten
 async def safe_send(interaction, *args, **kwargs):
     try:
         await interaction.response.send_message(*args, **kwargs)
@@ -85,7 +94,6 @@ async def safe_send(interaction, *args, **kwargs):
     except Exception as e:
         print(f"⚠️ Fehler beim Senden der Nachricht: {e}")
 
-# Bot ready Event
 @bot.event
 async def on_ready():
     print(f"✅ Bot ist online als {bot.user}")
@@ -95,7 +103,6 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Fehler beim Slash Sync: {e}")
 
-# /gear_set Command
 @bot.tree.command(name="gear_set", description="Setze dein Gear inkl. optionalem Bild")
 @app_commands.describe(
     familyname="Optional: Dein Familyname",
@@ -132,7 +139,6 @@ async def gear_set(interaction: discord.Interaction, klasse: str, state: str, ap
     save_gear(interaction.user.id, data)
     await safe_send(interaction, f"✅ Gear gespeichert! Gearscore: **{round(gearscore, 2)}**")
 
-# /gear_show Command
 @bot.tree.command(name="gear_show", description="Zeigt dein Gear oder das eines anderen")
 @app_commands.describe(user="Optional: anderer User")
 async def gear_show(interaction: discord.Interaction, user: discord.User = None):
@@ -157,7 +163,6 @@ async def gear_show(interaction: discord.Interaction, user: discord.User = None)
     else:
         await safe_send(interaction, embed=embed)
 
-# /gear_list Command
 @bot.tree.command(name="gear_list", description="Zeigt alle Geardaten nach Gearscore")
 async def gear_list(interaction: discord.Interaction):
     if not gear_data:
@@ -181,7 +186,6 @@ async def gear_list(interaction: discord.Interaction):
         )
     await safe_send(interaction, embed=embed)
 
-# /gear_update Command
 @bot.tree.command(name="gear_update", description="Aktualisiere dein gespeichertes Gear")
 @app_commands.describe(
     familyname="Optional: Neuer Familyname",
@@ -220,5 +224,8 @@ async def gear_update(interaction: discord.Interaction, familyname: str = None, 
 
     await safe_send(interaction, f"✅ Gear aktualisiert! Neuer Gearscore: **{data['gearscore']}**")
 
-# Bot starten
+# ==== Webserver starten (Render benötigt offenen Port!) ====
+threading.Thread(target=run_web).start()
+
+# ==== Bot starten ====
 bot.run(TOKEN)
